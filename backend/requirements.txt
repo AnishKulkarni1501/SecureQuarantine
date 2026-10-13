@@ -1,0 +1,10 @@
+fastapi>=0.115,<1
+uvicorn[standard]>=0.30,<1
+sqlalchemy>=2.0,<3
+python-multipart>=0.0.9
+pydantic>=2.8,<3
+httpx>=0.27,<1
+python-magic>=0.4.27; platform_system != "Windows"
+celery[redis]>=5.4,<6
+pymysql>=1.1,<2
+pymongo>=4.8,<5

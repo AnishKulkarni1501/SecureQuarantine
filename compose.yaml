@@ -1,0 +1,39 @@
+name: securequarantine
+services:
+  mysql:
+    image: mysql:8.4
+    environment:
+      MYSQL_DATABASE: securequarantine
+      MYSQL_USER: sq_app
+      MYSQL_PASSWORD: ${MYSQL_PASSWORD:-local-dev-password}
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:-local-root-password}
+    ports: ["127.0.0.1:3307:3306"]
+    volumes: ["mysql-data:/var/lib/mysql"]
+    healthcheck:
+      test: ["CMD-SHELL", "mysqladmin ping -h 127.0.0.1 -p$${MYSQL_ROOT_PASSWORD} --silent"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+  mongo:
+    image: mongo:8
+    ports: ["127.0.0.1:27018:27017"]
+    volumes: ["mongo-data:/data/db"]
+    healthcheck:
+      test: ["CMD", "mongosh", "--quiet", "--eval", "db.adminCommand('ping').ok"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+  redis:
+    image: redis:7-alpine
+    ports: ["127.0.0.1:6379:6379"]
+    command: ["redis-server", "--appendonly", "yes"]
+    volumes: ["redis-data:/data"]
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 10
+volumes:
+  mysql-data:
+  mongo-data:
+  redis-data:

@@ -1,0 +1,7 @@
+fastapi>=0.115,<1
+uvicorn[standard]>=0.30,<1
+httpx>=0.27,<1
+transformers>=4.45,<5
+safetensors>=0.4,<1
+# Install a platform-appropriate PyTorch build separately; this PC currently
+# has CPU-only PyTorch, so inference falls back to CPU.

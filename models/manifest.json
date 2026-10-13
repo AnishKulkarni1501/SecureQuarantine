@@ -1,0 +1,35 @@
+{
+  "generated_date": "2026-10-10",
+  "artifacts": [
+    {
+      "name": "LLM4Decompile V2 1.3B",
+      "path": "models/llm4decompile-1.3b-v2/model.safetensors",
+      "source": "https://huggingface.co/LLM4Binary/llm4decompile-1.3b-v2",
+      "revision": "a347dabcb1ea9f21c9339bd764c150262e993b95",
+      "bytes": 2692969128,
+      "sha256": "54b2497da08eeedefe880e2bad040e754ca754a959f79cffce68131cf5bf9fa8",
+      "format": "safetensors",
+      "license_note": "Included LICENSE contains DeepSeek model license terms.",
+      "loaded_or_executed": false
+    },
+    {
+      "name": "SecurityLLM 7B AWQ",
+      "path": "models/securityllm-7b-awq/model.safetensors",
+      "source": "https://huggingface.co/ZySec-AI/ZySec-7B-AWQ",
+      "revision": "d9802d25c9f4aec0ca5ae7d68ff4b0c21f1cc423",
+      "bytes": 4150880232,
+      "sha256": "4537f2c2aa855163004dd7489d55a1ada5405a80acddda77cbeaf2935a575605",
+      "format": "safetensors",
+      "license_note": "Apache-2.0 per Hugging Face repository metadata.",
+      "loaded_or_executed": false
+    },
+    {
+      "name": "Ghidra 12.1.4",
+      "path": "tools/ghidra_12.1.4_PUBLIC_20260921.zip",
+      "source": "https://github.com/NationalSecurityAgency/ghidra/releases/tag/Ghidra_12.1.4_build",
+      "bytes": 569649598,
+      "sha256": "ddac49f903da9d5bac833e5cc79395098b9c33cfd3279be5f31bd00387d2d4db",
+      "loaded_or_executed": false
+    }
+  ]
+}

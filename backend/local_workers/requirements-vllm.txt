@@ -1,0 +1,2 @@
+# Install in the WSL Ubuntu environment with NVIDIA GPU passthrough.
+vllm==0.31.0

@@ -1,0 +1,15 @@
+__pycache__/
+*.py[cod]
+.venv/
+node_modules/
+dist/
+*.db
+backend/data/
+.env
+
+# Large local model and reverse-engineering downloads
+models/**/model.safetensors
+models/**/.cache/
+models/**/*.parts/
+tools/*.zip
+
