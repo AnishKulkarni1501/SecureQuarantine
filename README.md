@@ -4,7 +4,7 @@ An analyst-focused malware analysis prototype. The first increment provides safe
 
 ## Safety and scope
 
-Uploaded files are stored as managed artifacts and inspected as bytes. This application does **not** execute samples, decompile them, contact reputation services, or claim that an inconclusive scan is safe. Quarantine/release changes the application's recorded disposition only; it never deletes or changes files on the host. Run this prototype on localhost with synthetic or authorized samples. A hostile-sample sandbox requires a separately hardened disposable VM.
+Uploaded files are stored as managed artifacts and inspected as bytes. Dynamic execution is opt-in and sent to a separate worker; the API process never runs a submitted sample. The Docker worker supports Linux ELF64 x86-64 only and is for synthetic or authorized samples. It disables networking and bounds resources, but its containers share Docker Desktop's WSL2 Linux kernel, so it is not a hardened disposable VM. Use a separate hardened VM for highly hostile samples. Quarantine/release changes the application's recorded disposition only; it never deletes or changes files on the host.
 
 ## Run locally
 
@@ -32,7 +32,7 @@ This remains a local development foundation, not a production deployment: it has
 
 ## Expanded pipeline and services
 
-The API now has versioned Pydantic contracts for Ghidra function output, LLM4Decompile refinement, ZySec-style security interpretation, and normalized sandbox events. `POST /api/analyses/{id}/enrich` attempts the configured stages and records each missing or failed stage explicitly. `include_sandbox` must be requested explicitly; the request is rejected unless a worker URL, secret and operator attestation flag are set. The configured worker must be a disposable hardened VM service: this backend does not run binaries in-process or create a regular Docker sandbox.
+The API now has versioned Pydantic contracts for Ghidra function output, LLM4Decompile refinement, ZySec-style security interpretation, and normalized sandbox events. `POST /api/analyses/{id}/enrich` attempts the configured stages and records each missing or failed stage explicitly. `include_sandbox` must be requested explicitly. The default worker mode requires a separately hardened disposable VM and operator attestation. The optional `docker_wsl2` mode requires a separate explicit acknowledgement and accepts only Linux ELF64 x86-64 artifacts. It uses an ephemeral container with `--network none`, a read-only root filesystem, no capabilities, `no-new-privileges`, bounded CPU/memory/process count, one read-only input mount, and ephemeral writable tmpfs. It does not provide a VM boundary, and syscall telemetry is best-effort.
 
 The adapters use these service contracts:
 
@@ -54,6 +54,22 @@ python -m uvicorn local_workers.service:app --host 127.0.0.1 --port 8100
 Set `GHIDRA_WORKER_URL` and `LLM4DECOMPILE_URL` to `http://127.0.0.1:8100` in `.env`, then start/restart the API with that environment file. Check worker readiness at `http://127.0.0.1:8100/health`.
 
 To try the SecurityLLM AWQ checkpoint in WSL Ubuntu, install `backend/local_workers/requirements-vllm.txt` in a dedicated WSL virtual environment, then run WSL `vllm serve` with the local model path, `--served-model-name securityllm`, `--quantization awq`, `--max-model-len 1024`, `--max-num-seqs 1`, and `--gpu-memory-utilization 0.90` on port 8200. When `http://127.0.0.1:8200/health` responds, set `ZYSEC_INTERPRETER_URL=http://127.0.0.1:8100` in `.env` and restart the API. The worker proxies structured interpretation requests to vLLM. A successful launch still needs a real inference request before treating the stage as operational.
+
+### Docker dynamic analysis for Linux ELF
+
+Build the fixed runner image from the repository root:
+
+```powershell
+docker build -t securequarantine/elf-sandbox:0.1 -f backend/docker_sandbox/Dockerfile backend/docker_sandbox
+```
+
+Set `SANDBOX_MODE=docker_wsl2`, `SANDBOX_DOCKER_CONTAINMENT_ACK=true`, `SANDBOX_WORKER_URL=http://127.0.0.1:8201`, and a unique `SANDBOX_WORKER_TOKEN` in `.env`. Keep `SANDBOX_ISOLATION_ATTESTED=false`; Docker container acknowledgement is distinct from VM attestation. Start the worker from `backend` with:
+
+```powershell
+python -m uvicorn local_workers.docker_sandbox:app --host 127.0.0.1 --port 8201
+```
+
+Check `http://127.0.0.1:8201/health`, then restart FastAPI so it loads the worker settings. The dashboard requires an analyst to request the Docker run. Each run is capped at 30 seconds, 256 MiB RAM, one CPU and 32 processes; networking is disabled and the named container is removed afterward. `strace` observations can be incomplete or tampered with by a sample and must not be treated as proof of safety. The worker does not emulate Windows APIs or run PE files.
 
 ### Optional local infrastructure
 

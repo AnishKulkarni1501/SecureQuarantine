@@ -15,7 +15,7 @@ from .db import Base, engine, get_db, migrate_legacy_sqlite_schema
 from .models import Analysis, AnalystCorrection, AuditLog, EvidenceOutbox, FileRecord, Finding, FunctionSummary, SandboxEvent
 from .schemas import AnalysisDetail, AnalysisOut, DispositionRequest, FileOut
 from .auth import Actor, analyst, reviewer
-from .adapters import AdapterUnavailable, ghidra_decompile, interpret_function, refine_pseudocode, run_isolated_sandbox
+from .adapters import AdapterUnavailable, ghidra_decompile, interpret_function, refine_pseudocode, run_isolated_sandbox, sandbox_is_configured
 from .contracts import AnalystCorrection as AnalystCorrectionIn, EnrichmentRequest
 from .policy import assess_risk, correlate
 from .evidence_store import drain_pending, drain_snapshot, queue_snapshot, read_snapshot
@@ -27,7 +27,7 @@ ARTIFACT_DIR.mkdir(parents=True, exist_ok=True)
 Base.metadata.create_all(bind=engine)
 migrate_legacy_sqlite_schema()
 
-app = FastAPI(title="SecureQuarantine API", version="0.1.0", description="Local prototype. Uploaded binaries are inspected as bytes only and never executed.")
+app = FastAPI(title="SecureQuarantine API", version="0.1.0", description="Local prototype. Uploaded binaries are inspected as bytes; dynamic execution is available only when an analyst opts into a configured sandbox worker.")
 app.add_middleware(CORSMiddleware, allow_origins=["http://localhost:5173", "http://127.0.0.1:5173"], allow_credentials=False, allow_methods=["GET", "POST"], allow_headers=["*"])
 
 
@@ -44,7 +44,8 @@ async def sandbox_result(data: bytes, sha256: str):
 
 @app.get("/api/health")
 def health():
-    return {"status": "ok", "mode": os.getenv("APP_ENV", "development"), "sample_execution": False, "configured": {"mysql_or_sqlite": True, "mongodb": bool(os.getenv("MONGO_URI")), "celery": bool(os.getenv("CELERY_BROKER_URL")), "ghidra": bool(os.getenv("GHIDRA_WORKER_URL")), "llm4decompile": bool(os.getenv("LLM4DECOMPILE_URL")), "zysec_interpreter": bool(os.getenv("ZYSEC_INTERPRETER_URL")), "sandbox": bool(os.getenv("SANDBOX_WORKER_URL")) and os.getenv("SANDBOX_ISOLATION_ATTESTED", "").lower() == "true"}}
+    sandbox_mode = os.getenv("SANDBOX_MODE", "hardened_vm").strip().lower()
+    return {"status": "ok", "mode": os.getenv("APP_ENV", "development"), "sample_execution": False, "sandbox_mode": sandbox_mode if sandbox_is_configured() else None, "configured": {"mysql_or_sqlite": True, "mongodb": bool(os.getenv("MONGO_URI")), "celery": bool(os.getenv("CELERY_BROKER_URL")), "ghidra": bool(os.getenv("GHIDRA_WORKER_URL")), "llm4decompile": bool(os.getenv("LLM4DECOMPILE_URL")), "zysec_interpreter": bool(os.getenv("ZYSEC_INTERPRETER_URL")), "sandbox": sandbox_is_configured()}}
 
 
 @app.post("/api/files", response_model=FileOut, status_code=201)
@@ -169,7 +170,7 @@ async def enrich_analysis(analysis_id: str, request: EnrichmentRequest, actor: A
             for event in report.events:
                 analysis.events.append(SandboxEvent(event_type=event.event_type, observed_at=event.observed_at, process=event.process, target=event.target, details=event.details, source=event.source))
             analysis.stage_status["sandbox"] = "completed" if report.complete else "incomplete"
-            audit(db, "analysis.sandbox", "completed" if report.complete else "incomplete", f"Isolated worker run {report.run_id}; {len(report.events)} normalized events.", analysis.file_id, analysis.id, actor.name)
+            audit(db, "analysis.sandbox", "completed" if report.complete else "incomplete", f"{os.getenv('SANDBOX_MODE', 'hardened_vm')} worker run {report.run_id}; {len(report.events)} events. Limitations: {'; '.join(report.limitations)[:600]}", analysis.file_id, analysis.id, actor.name)
         except AdapterUnavailable as exc:
             analysis.stage_status["sandbox"] = "not_configured" if "disabled" in str(exc) or "not configured" in str(exc) else "failed"
             audit(db, "analysis.sandbox", "inconclusive", str(exc), analysis.file_id, analysis.id, actor.name)
@@ -270,9 +271,11 @@ def get_evidence(analysis_id: str, actor: Actor = Depends(analyst), db: Session 
     except Exception:
         stored = None
     if stored:
-        return {**stored, "mongo_sync": "synced", "limitations": ["Sandbox execution is a separate, opt-in isolated VM stage.", "AI-generated function interpretations are hypotheses, not recovered ground truth.", "Absence of a string match or runtime event is not evidence of safety."]}
+        sandbox_limitation = "Docker dynamic analysis supports Linux ELF64 x86-64 only; its container shares the WSL2 Linux kernel and is not a disposable VM." if os.getenv("SANDBOX_MODE", "").lower() == "docker_wsl2" else "Sandbox execution is a separate, opt-in isolated VM stage."
+        return {**stored, "mongo_sync": "synced", "limitations": [sandbox_limitation, "AI-generated function interpretations are hypotheses, not recovered ground truth.", "Absence of a string match or runtime event is not evidence of safety."]}
     pending = db.scalar(select(EvidenceOutbox).where(EvidenceOutbox.analysis_id == analysis_id))
-    return {"analysis_id": analysis.id, "completeness": analysis.completeness, "findings": [{"kind": f.kind, "title": f.title, "detail": f.detail, "source": f.source, "confidence": f.confidence} for f in analysis.findings], "functions": [{"address": f.address, "name": f.name, "purpose": f.purpose, "capabilities": f.capabilities, "confidence": f.confidence, "model_name": f.model_name, "prompt_version": f.prompt_version} for f in analysis.functions], "events": [{"event_type": e.event_type, "observed_at": e.observed_at, "process": e.process, "target": e.target, "details": e.details} for e in analysis.events], "correlations": analysis.correlations, "mongo_sync": pending.status if pending else "not_queued", "limitations": ["Sandbox execution is a separate, opt-in isolated VM stage.", "AI-generated function interpretations are hypotheses, not recovered ground truth.", "Absence of a string match or runtime event is not evidence of safety."]}
+    sandbox_limitation = "Docker dynamic analysis supports Linux ELF64 x86-64 only; its container shares the WSL2 Linux kernel and is not a disposable VM." if os.getenv("SANDBOX_MODE", "").lower() == "docker_wsl2" else "Sandbox execution is a separate, opt-in isolated VM stage."
+    return {"analysis_id": analysis.id, "completeness": analysis.completeness, "findings": [{"kind": f.kind, "title": f.title, "detail": f.detail, "source": f.source, "confidence": f.confidence} for f in analysis.findings], "functions": [{"address": f.address, "name": f.name, "purpose": f.purpose, "capabilities": f.capabilities, "confidence": f.confidence, "model_name": f.model_name, "prompt_version": f.prompt_version} for f in analysis.functions], "events": [{"event_type": e.event_type, "observed_at": e.observed_at, "process": e.process, "target": e.target, "details": e.details} for e in analysis.events], "correlations": analysis.correlations, "mongo_sync": pending.status if pending else "not_queued", "limitations": [sandbox_limitation, "AI-generated function interpretations are hypotheses, not recovered ground truth.", "Absence of a string match or runtime event is not evidence of safety."]}
 
 
 @app.post("/api/files/{file_id}/{action}", response_model=FileOut)

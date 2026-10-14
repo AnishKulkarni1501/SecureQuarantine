@@ -1,8 +1,8 @@
 """Adapters for separately hosted, replaceable analysis services.
 
-This process never starts a binary. Ghidra and sandbox endpoints must run in
-their own disposable, isolated VM boundary. AI endpoints are OpenAI-compatible
-service adapters and must return JSON matching the versioned contracts.
+This process never starts a binary. Dynamic execution is sent to an explicitly
+configured worker; the Docker Desktop mode is bounded, opt-in, and not a VM.
+AI endpoints return JSON matching the versioned contracts.
 """
 import os
 from urllib.parse import urlparse
@@ -78,15 +78,27 @@ async def interpret_function(function: dict) -> FunctionInterpretation:
         raise AdapterUnavailable("Interpreter returned invalid structured output") from exc
 
 
+def sandbox_is_configured() -> bool:
+    mode = os.getenv("SANDBOX_MODE", "hardened_vm").strip().lower()
+    worker_ready = bool(os.getenv("SANDBOX_WORKER_URL", "").strip() and os.getenv("SANDBOX_WORKER_TOKEN", ""))
+    if mode == "docker_wsl2":
+        return worker_ready and os.getenv("SANDBOX_DOCKER_CONTAINMENT_ACK", "").lower() == "true"
+    if mode == "hardened_vm":
+        return worker_ready and os.getenv("SANDBOX_ISOLATION_ATTESTED", "").lower() == "true"
+    return False
+
+
 async def run_isolated_sandbox(data: bytes, sha256: str) -> SandboxReport:
     url = os.getenv("SANDBOX_WORKER_URL", "").strip()
-    if not url or os.getenv("SANDBOX_ISOLATION_ATTESTED", "").lower() != "true":
-        raise AdapterUnavailable("Sandbox disabled: configure a disposable hardened VM worker and set SANDBOX_ISOLATION_ATTESTED=true after validating isolation")
+    mode = os.getenv("SANDBOX_MODE", "hardened_vm").strip().lower()
+    if not sandbox_is_configured():
+        raise AdapterUnavailable("Sandbox disabled: configure a worker and explicitly acknowledge its isolation mode")
     secret = os.getenv("SANDBOX_WORKER_TOKEN", "")
     if not secret:
         raise AdapterUnavailable("Sandbox worker token is not configured")
     import base64
-    result = await _post_json(url.rstrip("/") + "/v1/run", {"sha256": sha256, "binary_base64": base64.b64encode(data).decode("ascii"), "network": "disabled_by_default", "timeout_seconds": 90, "destroy_after_run": True}, {"Authorization": f"Bearer {secret}"})
+    runtime_limit = 30 if mode == "docker_wsl2" else 90
+    result = await _post_json(url.rstrip("/") + "/v1/run", {"sha256": sha256, "binary_base64": base64.b64encode(data).decode("ascii"), "network": "disabled_by_default", "timeout_seconds": runtime_limit, "destroy_after_run": True}, {"Authorization": f"Bearer {secret}"})
     try:
         return SandboxReport.model_validate(result)
     except ValidationError as exc:
